@@ -1,0 +1,112 @@
+import pandas as pd
+
+def analyze_employee_logins(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Analyzes employee login matches within the same emp_id, marking special cases
+    where there are different flags and no Terminated status.
+    """
+    # Create a copy of the input DataFrame
+    work_df = df.copy()
+    
+    # Step 1: Analyze groups for flag and status conditions
+    group_analysis = (
+        work_df.groupby(['emp_id', 'emp_type'])
+        .agg({
+            'flag': lambda x: ('Y' in x.values) and ('N' in x.values),
+            'status': lambda x: 'T' not in x.values
+        })
+        .reset_index()
+    )
+    
+    group_analysis.columns = ['emp_id', 'emp_type', 'has_both_flags', 'no_status_t']
+    group_analysis['special_case'] = (
+        group_analysis['has_both_flags'] & 
+        group_analysis['no_status_t']
+    )
+    
+    # Step 2: Perform matching for all records
+    def determine_match_type(row, full_df):
+        # Get all records for this emp_id
+        same_emp_records = full_df[full_df['emp_id'] == row['emp_id']].copy()
+        
+        dev_login = str(row['dev_login']).lower()
+        match_types = []
+        
+        # Compare with each UAT login for the same employee
+        for _, emp_record in same_emp_records.iterrows():
+            uat_login = str(emp_record['uat_login']).lower()
+            
+            if dev_login == uat_login:
+                match_types.append('FULL_MATCH')
+            elif len(dev_login) >= 3 and len(uat_login) >= 3 and dev_login[:3] == uat_login[:3]:
+                match_types.append('PARTIAL_MATCH')
+            else:
+                match_types.append('NO_MATCH')
+        
+        # Return best match type found
+        if 'FULL_MATCH' in match_types:
+            return 'FULL_MATCH'
+        elif 'PARTIAL_MATCH' in match_types:
+            return 'PARTIAL_MATCH'
+        else:
+            return 'NO_MATCH'
+    
+    # Perform matching for all records
+    work_df['match_type'] = work_df.apply(
+        lambda row: determine_match_type(row, work_df), axis=1
+    )
+    
+    # Merge group analysis results back
+    result_df = work_df.merge(
+        group_analysis[['emp_id', 'emp_type', 'special_case']],
+        on=['emp_id', 'emp_type'],
+        how='left'
+    )
+    
+    # Sort results
+    result_df = result_df.sort_values(['emp_id', 'emp_type', 'flag'])
+    
+    # Select final columns
+    final_df = result_df[[
+        'emp_id', 
+        'emp_type', 
+        'dev_login', 
+        'uat_login', 
+        'status',
+        'flag',
+        'match_type',
+        'special_case'
+    ]].copy()
+    
+    return final_df
+
+# Test with sample data
+def test_with_dataframe():
+    test_data = {
+        'emp_id':    ['E001', 'E001', 'E001', 'E002', 'E002', 'E003', 'E003'],
+        'emp_type':  ['DEV',  'DEV',  'DEV',  'QA',   'QA',   'DEV',  'DEV'],
+        'dev_login': ['john_dev', 'john_dev', 'john_dev', 'mary_dev', 'mary_dev', 'bob_dev', 'bob_dev'],
+        'uat_login': ['john_uat', 'john_dev', 'johnny',   'mary_uat', 'mary_dev', 'bob_dev', 'bobby'],
+        'status':    ['A', 'A', 'A', 'T', 'A', 'A', 'A'],
+        'flag':      ['Y', 'N', 'N', 'Y', 'N', 'Y', 'N']
+    }
+    
+    input_df = pd.DataFrame(test_data)
+    
+    print("\nInput DataFrame:")
+    print(input_df)
+    print("\n" + "="*80 + "\n")
+    
+    result_df = analyze_employee_logins(input_df)
+    
+    print("Result DataFrame:")
+    print(result_df)
+    print("\n" + "="*80 + "\n")
+    
+    # Print special cases
+    special_cases = result_df[result_df['special_case'] == True]
+    print("Special Cases (Different flags and no T status):")
+    print(special_cases)
+
+if __name__ == "__main__":
+    test_with_dataframe()
